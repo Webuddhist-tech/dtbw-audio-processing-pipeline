@@ -8,7 +8,12 @@ Usage:
 
     Each --example is LABEL=TIME (h:mm:ss, mm:ss or seconds), optionally +SECONDS
     for its length (default 20 s). Give at least one example per label; more is better.
-    Without any --example the voices are sorted blindly into --groups groups.
+
+    Same speakers in another recording? Reuse the examples already confirmed there:
+    .venv/bin/python scripts/detect_speakers.py teachings.mp3 --examples-from practice.mp3
+    (that file must have been run with --example before). Both options can be combined.
+
+    Without any examples the voices are sorted blindly into --groups groups.
 
 How it works:
     1. Cut the audio into short overlapping windows (1.5 s) and skip pauses.
@@ -125,20 +130,21 @@ def unit(v: np.ndarray) -> np.ndarray:
     return v / np.linalg.norm(v, axis=-1, keepdims=True)
 
 
-def classify_with_examples(times, speech, emb, examples) -> tuple:
-    """Label every speech window with the closest example label, adapting labels to the recording."""
-    names = sorted({label for label, _, _ in examples})
-    anchors = []
-    for name in names:
-        picked = np.zeros(len(times), bool)
-        for label, start, length in examples:
-            if label == name:
-                picked |= (times >= start) & (times + WIN <= start + length)
-        picked &= speech
+def example_vectors(times, speech, emb, examples, source: str) -> dict:
+    """Fingerprints inside each example, grouped by label."""
+    vectors = {}
+    for label, start, length in examples:
+        picked = speech & (times >= start) & (times + WIN <= start + length)
         if not picked.any():
-            sys.exit(f"Example(s) for {name!r} contain no speech windows; pick another time.")
-        anchors.append(unit(emb[picked].mean(axis=0)))
-    anchors = np.array(anchors)
+            sys.exit(f"Example {label}={fmt(start)} in {source} contains no speech windows; pick another time.")
+        vectors.setdefault(label, []).append(emb[picked])
+    return vectors
+
+
+def classify_with_examples(speech, emb, vectors: dict) -> tuple:
+    """Label every speech window with the closest example label, adapting labels to the recording."""
+    names = sorted(vectors)
+    anchors = np.array([unit(np.concatenate(vectors[name]).mean(axis=0)) for name in names])
 
     centroids = anchors.copy()
     speech_emb = emb[speech]
@@ -245,6 +251,8 @@ def main() -> None:
     parser.add_argument("audio", type=Path)
     parser.add_argument("--example", type=parse_example, action="append", default=[],
                         help="LABEL=TIME[+SECONDS], e.g. teacher=58:46 (repeatable)")
+    parser.add_argument("--examples-from", type=Path, action="append", default=[],
+                        help="another recording (same speakers) whose confirmed examples to reuse (repeatable)")
     parser.add_argument("--groups", type=int, default=2, help="number of groups when no examples are given")
     args = parser.parse_args()
     if not args.audio.exists():
@@ -255,9 +263,23 @@ def main() -> None:
     times, speech, emb = fingerprints(args.audio, out_dir / "fingerprints.npz")
     print(f"  {len(times)} windows, {speech.mean():.0%} contain sound")
 
-    if args.example:
-        print(f"Learning from {len(args.example)} examples ...")
-        names, centroids = classify_with_examples(times, speech, emb, args.example)
+    vectors = {}
+    for source in args.examples_from:
+        src_dir = OUTPUT_ROOT / source.stem
+        if not (src_dir / "examples.json").exists() or not source.exists():
+            sys.exit(f"No confirmed examples for {source}; run this script on it with --example first.")
+        src_examples = [(e["label"], e["start"], e["end"] - e["start"])
+                        for e in json.loads((src_dir / "examples.json").read_text())]
+        print(f"Reusing {len(src_examples)} examples from {source.name} ...")
+        src_times, src_speech, src_emb = fingerprints(source, src_dir / "fingerprints.npz")
+        for label, vecs in example_vectors(src_times, src_speech, src_emb, src_examples, source.name).items():
+            vectors.setdefault(label, []).extend(vecs)
+    for label, vecs in example_vectors(times, speech, emb, args.example, args.audio.name).items():
+        vectors.setdefault(label, []).extend(vecs)
+
+    if vectors:
+        print(f"Learning labels: {', '.join(sorted(vectors))} ...")
+        names, centroids = classify_with_examples(speech, emb, vectors)
     else:
         print(f"No examples: sorting blindly into {args.groups} groups ...")
         names, centroids = classify_blind(speech, emb, args.groups)
