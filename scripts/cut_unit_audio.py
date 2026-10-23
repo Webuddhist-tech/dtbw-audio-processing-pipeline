@@ -21,6 +21,8 @@ Also cuts the steps of a practice plan: if the recording has no course curriculu
     "skip": [[start, end], ...]   leave these parts out (e.g. the teacher teaching a melody)
     "keep_pauses": true           keep the silences between pieces at their real length (as clean
                                   silence, not the static), so a guided meditation keeps its pauses
+With --source CLEAN.wav (from denoise.py) the sound is taken from the cleaned recording; the speaker
+timeline and the pauses still come from the original file, so the cuts land in the same places.
 Nothing is sent anywhere.
 """
 import argparse
@@ -139,6 +141,7 @@ def main() -> None:
     parser.add_argument("audio", type=Path)
     parser.add_argument("--units", nargs="*", help="unit or step numbers (default: all)")
     parser.add_argument("--chanting", choices=["tibetan", "both", "none"], default="tibetan")
+    parser.add_argument("--source", type=Path, help="take the sound from this file instead (e.g. the cleaned recording)")
     args = parser.parse_args()
 
     rec = recording_dir(args.audio)
@@ -161,14 +164,15 @@ def main() -> None:
         offset = max(0.0, a - SNAP - 1)
         end = b + SNAP + 1
         pauses = find_pauses(decode(args.audio, offset, end, ANALYSIS_SR, "int16"))
-        audio = decode(args.audio, offset, end, OUT_SR, "float32")
+        audio = decode(args.source or args.audio, offset, end, OUT_SR, "float32")
         tracks = unit_pieces(u, segments, pauses, offset, args.chanting)
 
         ranges = allowed_ranges(u)
         skipped = "".join(f"; left out {fmt(s)} - {fmt(e)}" for s, e in u["audio"].get("skip", []))
         lines = [f"{kind.capitalize()} {u['number']}  {u['title_bo']}  ({u['title_en']})",
                  f"Original recording {fmt(a)} - {fmt(b)}{skipped}; chanting goes to: {args.chanting}"
-                 + ("; pauses kept at real length" if u["audio"].get("keep_pauses") else ""), ""]
+                 + ("; pauses kept at real length" if u["audio"].get("keep_pauses") else ""),
+                 f"Sound from: {(args.source or args.audio).name}", ""]
         summary[u["number"]] = {}
         for track, label in TRACKS.items():
             if track not in u["audio"].get("tracks", TRACKS):

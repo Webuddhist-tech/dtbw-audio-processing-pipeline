@@ -11,6 +11,7 @@ output/
                 working files/              pieces sent to Monlam, raw replies, log, hand corrections
             3 - Course draft/               curriculum, unit content, unit audio, Word outline
             3 - Practice plan draft/        or, for a practice session: steps, step audio
+            4 - Clean audio/                the recording with the static removed (denoise.py)
     Early tests/                            the first Monlam test clips and audio cleaning tests
 
 A recording's folder name comes from its audio path:
