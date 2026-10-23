@@ -4,7 +4,7 @@ Usage:
     python scripts/clean_audio.py [AUDIO_FILE]
 
 Defaults to the 30-second clip used in the first Monlam test.
-Writes one file per cleaning level to output/cleaning/<audio name>/:
+Writes one file per cleaning level to output/Early tests/Audio cleaning/<audio name>/:
 
     0_original.mp3  untouched copy, for comparison
     1_light.wav     remove low rumble + even out the volume
@@ -21,9 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_INPUT = PROJECT_ROOT / "output" / "test" / "260813_0631_300s_30s.mp3"
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "cleaning"
+from paths import EARLY_TESTS, PROJECT_ROOT
+
+DEFAULT_INPUT = EARLY_TESTS / "Monlam test clips" / "260813_0631_300s_30s.mp3"
+OUTPUT_ROOT = EARLY_TESTS / "Audio cleaning"
 
 # highpass: drops rumble/hum below 80 Hz (fans, traffic, mic handling); speech is above this.
 # afftdn:   FFT noise reduction; nr = how many dB of noise to remove, tn=1 keeps tracking the noise level.

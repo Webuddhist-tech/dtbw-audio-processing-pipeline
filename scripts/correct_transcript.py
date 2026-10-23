@@ -1,8 +1,9 @@
 """Correct a Monlam transcript: rule-based spelling fixes plus hand corrections, with a review log.
 
 Usage:
-    python scripts/correct_transcript.py prepare AUDIO_NAME   # rule-based pass + numbered chunks for hand review
-    python scripts/correct_transcript.py build AUDIO_NAME     # merge hand corrections, write outputs
+    python scripts/correct_transcript.py prepare RECORDING   # rule-based pass + numbered chunks for hand review
+    python scripts/correct_transcript.py build RECORDING     # merge hand corrections, write outputs
+    RECORDING = the recording's folder name or a unique part of it, e.g. "Day 1 - Morning - Teachings" or teachings
 
 Rule-based pass (only clear, mechanical spelling errors):
     - the gi/kyi/gyi particle (Monlam writes ཀི, གི, ཀྱི, གྱི almost at random, +ས and +ན) is
@@ -10,11 +11,11 @@ Rule-based pass (only clear, mechanical spelling errors):
     - "མྱི" -> "མི"; spoken forms in SPOKEN_FORMS (ཏོག་ཙི → ཏོག་ཙམ, ཡོད་རཱ → ཡོད་རེད, ...)
     - tidy stray punctuation left by Monlam ("། །།། །", "།་", double spaces)
 
-Hand corrections live in output/transcripts/<name>/corrections/*.json as
+Reads 2 - Transcript/transcript_raw.json. Hand corrections live in 2 - Transcript/working files/corrections/*.json as
     {"<line index>": {"text": "...corrected...", "note": "why", "tag": "teacher|prayer|participant|translator|unclear|announcement"}}
 A line not listed keeps its rule-corrected text and the tag "teacher".
 
-Outputs in output/transcripts/<name>/:
+Outputs in output/Recordings/<recording>/2 - Transcript/ (review chunks go to working files/review_chunks/):
     transcript_corrected.txt    readable corrected transcript (tags shown for non-teaching lines)
     transcript_corrected.json   every line with original, corrected text, tag and note
     corrections_review.txt      only the changed lines: before -> after, with the reason
@@ -24,8 +25,8 @@ import re
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "transcripts"
+from paths import find_recording, transcript_dir, working_dir
+
 CHUNK = 45
 
 BASE = set(chr(c) for c in range(0x0F40, 0x0F6D))   # Tibetan base consonants
@@ -88,8 +89,9 @@ def rule_fix(text: str, tidy: bool = True) -> str:
 
 
 def load(name: str) -> tuple:
-    d = OUTPUT_ROOT / name
-    return d, json.loads((d / "transcript.json").read_text())
+    rec = find_recording(name)
+    d = transcript_dir(rec)
+    return d, working_dir(rec), json.loads((d / "transcript_raw.json").read_text())
 
 
 def fmt(seconds: float) -> str:
@@ -99,10 +101,10 @@ def fmt(seconds: float) -> str:
 
 
 def prepare(name: str) -> None:
-    d, lines = load(name)
-    chunks = d / "review_chunks"
-    chunks.mkdir(exist_ok=True)
-    (d / "corrections").mkdir(exist_ok=True)
+    d, work, lines = load(name)
+    chunks = work / "review_chunks"
+    chunks.mkdir(parents=True, exist_ok=True)
+    (work / "corrections").mkdir(exist_ok=True)
     rows = [(i, l) for i, l in enumerate(lines) if l["text"]]
     for n in range(0, len(rows), CHUNK):
         part = rows[n:n + CHUNK]
@@ -114,9 +116,9 @@ def prepare(name: str) -> None:
 
 
 def build(name: str) -> None:
-    d, lines = load(name)
+    d, work, lines = load(name)
     hand = {}
-    for f in sorted((d / "corrections").glob("*.json")):
+    for f in sorted((work / "corrections").glob("*.json")):
         hand.update(json.loads(f.read_text()))
 
     out, review = [], []

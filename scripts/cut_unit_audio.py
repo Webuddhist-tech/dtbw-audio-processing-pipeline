@@ -3,16 +3,16 @@
 Usage:
     .venv/bin/python scripts/cut_unit_audio.py AUDIO_FILE [--units 1.2.2 1.3.2] [--chanting tibetan|both|none]
 
-Reads output/course/<name>/curriculum.json (unit time ranges) and
-output/speakers/<name>/segments.json (who speaks when). For every unit:
+Reads 3 - Course draft/curriculum.json (unit time ranges) and 1 - Speakers/segments.json
+(who speaks when) in the recording's folder (see paths.py). For every unit:
     - teacher turns            -> Tibetan file   (unit_<n>_bo.mp3)
     - translator turns         -> Ladakhi file   (unit_<n>_lad.mp3)
     - chanting                 -> where --chanting says (default: Tibetan)
     - silence / static         -> left out
 Each switch between speakers is moved to the nearest real pause (within SNAP s), so no word is cut
 and no word of the other language leaks in. Pieces are joined with a short pause and tiny fades.
-A joins list (unit_<n>_joins.txt) tells the reviewer where each join is, to check by ear, and
-audio/tracks.json records each unit's files and lengths (used by the course outline).
+Files go to 3 - Course draft/unit audio/. A joins list (unit_<n>_joins.txt) tells the reviewer where each join is, to check by ear, and
+tracks.json records each unit's files and lengths (used by the course outline).
 A unit whose curriculum entry has "tracks": ["bo"] gets no Ladakhi file.
 Nothing is sent anywhere.
 """
@@ -27,9 +27,9 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paths import course_draft_dir, recording_dir, speakers_dir  # noqa: E402
 from transcribe import find_pauses  # noqa: E402  (same pause detection as transcription)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUT_SR = 44100
 ANALYSIS_SR = 16000
 SNAP = 2.0         # move a speaker switch to the longest pause within this many seconds
@@ -119,10 +119,10 @@ def main() -> None:
     parser.add_argument("--chanting", choices=["tibetan", "both", "none"], default="tibetan")
     args = parser.parse_args()
 
-    name = args.audio.stem
-    course = json.loads((PROJECT_ROOT / "output" / "course" / name / "curriculum.json").read_text())
-    segments = json.loads((PROJECT_ROOT / "output" / "speakers" / name / "segments.json").read_text())
-    out_dir = PROJECT_ROOT / "output" / "course" / name / "audio"
+    rec = recording_dir(args.audio)
+    course = json.loads((course_draft_dir(rec) / "curriculum.json").read_text())
+    segments = json.loads((speakers_dir(rec) / "segments.json").read_text())
+    out_dir = course_draft_dir(rec) / "unit audio"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     units = [u for s in course["sections"] for ss in s["subsections"] for u in ss["units"]]

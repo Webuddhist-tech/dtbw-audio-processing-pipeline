@@ -1,5 +1,6 @@
-// Build the course outline Word file from output/course/<name>/curriculum.json.
+// Build the course outline Word file from a recording's "3 - Course draft/curriculum.json".
 // Usage: node scripts/make_course_outline.js teachings
+// (the recording's folder name in output/Recordings, or a unique part of it - see paths.py)
 // (needs the npm package "docx"; set NODE_PATH if it is installed elsewhere)
 const fs = require("fs");
 const path = require("path");
@@ -8,8 +9,16 @@ const {
   WidthType, ShadingType, AlignmentType, LevelFormat, BorderStyle,
 } = require("docx");
 
-const name = process.argv[2] || "teachings";
-const dir = path.join(__dirname, "..", "output", "course", name);
+const name = (process.argv[2] || "teachings").toLowerCase();
+const recordings = path.join(__dirname, "..", "output", "Recordings");
+const folders = fs.readdirSync(recordings).filter((f) => fs.statSync(path.join(recordings, f)).isDirectory());
+const exact = folders.filter((f) => f.toLowerCase() === name);
+const matches = exact.length ? exact : folders.filter((f) => f.toLowerCase().includes(name));
+if (matches.length !== 1) {
+  console.error(`${matches.length ? "Several" : "No"} recordings match "${name}". Use one of:\n    ${(matches.length ? matches : folders).join("\n    ")}`);
+  process.exit(1);
+}
+const dir = path.join(recordings, matches[0], "3 - Course draft");
 const course = JSON.parse(fs.readFileSync(path.join(dir, "curriculum.json"), "utf8"));
 
 const TIB = "Monlam Uni OuChan2";   // Tibetan Unicode font; Word falls back if it is missing
@@ -32,7 +41,7 @@ const cell = (children, width, fill) => new TableCell({
 
 const units = [];
 course.sections.forEach((s) => s.subsections.forEach((ss) => ss.units.forEach((u) => units.push(u))));
-const tracksFile = path.join(dir, "audio", "tracks.json");
+const tracksFile = path.join(dir, "unit audio", "tracks.json");
 const tracks = fs.existsSync(tracksFile) ? JSON.parse(fs.readFileSync(tracksFile, "utf8")) : {};
 const mins = (u, t) => (tracks[u.number] && tracks[u.number][t] ? tracks[u.number][t].minutes : null);
 const totalBo = units.reduce((a, u) => a + (mins(u, "bo") || 0), 0);

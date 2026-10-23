@@ -6,7 +6,7 @@ Step 1 - make clips:
     places used as --example), and cuts a 10 s clip around it. The clips have no labels;
     the answer key is saved separately so the listener isn't influenced.
 
-Step 2 - listen and fill in output/speakers/<name>/spot_check/answers.txt
+Step 2 - listen and fill in output/Recordings/<recording>/1 - Speakers/spot_check/answers.txt
     with one letter per clip: T = teacher, L = translator (Ladakhi), C = chanting,
     S = static / no speech, M = mixed (more than one in the clip).
 
@@ -20,8 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from paths import recording_dir, speakers_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "speakers"
 CLIP_LEN = 10.0
 EXAMPLE_MARGIN = 30.0  # stay this far (s) away from the examples the script learned from
 SEED = 2026
@@ -122,7 +123,7 @@ def main() -> None:
     parser.add_argument("audio", type=Path)
     parser.add_argument("--count", type=int, default=20)
     args = parser.parse_args()
-    out_dir = OUTPUT_ROOT / args.audio.stem
+    out_dir = speakers_dir(recording_dir(args.audio))
     if not (out_dir / "segments.json").exists():
         sys.exit(f"Run detect_speakers.py on {args.audio.name} first.")
     if args.step == "make":

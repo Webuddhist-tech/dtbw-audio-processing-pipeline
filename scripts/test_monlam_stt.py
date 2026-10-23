@@ -4,7 +4,7 @@ Usage:
     python scripts/test_monlam_stt.py AUDIO_FILE [--start SECONDS] [--duration SECONDS]
     python scripts/test_monlam_stt.py AUDIO_FILE --whole [--start OFFSET_SECONDS]
 
-By default a clip is cut with ffmpeg and saved to output/test/.
+By default a clip is cut with ffmpeg and saved to output/Early tests/Monlam test clips/.
 With --whole the file is sent as-is (e.g. an already-cut or cleaned clip) and the
 results are saved next to it; --start then only shifts the printed timestamps.
 
@@ -23,8 +23,9 @@ from pathlib import Path
 
 import requests
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "output" / "test"
+from paths import EARLY_TESTS, PROJECT_ROOT
+
+OUTPUT_DIR = EARLY_TESTS / "Monlam test clips"
 POLL_SECONDS = 5
 TIMEOUT_SECONDS = 15 * 60
 

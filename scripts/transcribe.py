@@ -3,7 +3,7 @@
 Usage:
     .venv/bin/python scripts/transcribe.py AUDIO_FILE [--labels teacher] [--limit-minutes 10] [--dry-run] [--yes]
 
-Needs the speaker timeline from detect_speakers.py (output/speakers/<name>/segments.json).
+Needs the speaker timeline from detect_speakers.py (1 - Speakers/segments.json).
 
 Steps:
     1. Keep only the segments with the chosen labels (default: teacher).
@@ -19,11 +19,13 @@ Steps:
        resent, up to RESPLIT_ROUNDS times.
     7. Shift Monlam's in-piece times to times in the original file and write the transcript.
 
-Writes to output/transcripts/<name>/:
-    progress.log       the live progress log (also printed)
-    pieces/ results/   the audio pieces sent and Monlam's raw replies
-    transcript.txt     readable transcript, with markers for skipped parts and warnings
-    transcript.json    the same, for the curriculum step
+Writes to output/Recordings/<recording>/2 - Transcript/ (see paths.py):
+    transcript_raw.txt     readable transcript, with markers for skipped parts and warnings
+    transcript_raw.json    the same, for the correction step
+    working files/
+        progress.log       the live progress log (also printed)
+        plan.json          the pieces and where they were cut
+        pieces/ results/   the audio pieces sent and Monlam's raw replies
 """
 import argparse
 import datetime
@@ -41,9 +43,9 @@ import numpy as np
 import requests
 import soundfile as sf
 
+from paths import recording_dir, show, speakers_dir, transcript_dir, working_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SPEAKERS_ROOT = PROJECT_ROOT / "output" / "speakers"
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "transcripts"
 
 SR = 16000
 FRAME = 0.02            # seconds per loudness frame
@@ -362,8 +364,8 @@ def build_transcript(plan: list, results: dict, segments: list, out_dir: Path) -
                           "text": None, "piece": None, "warnings": [], "near_switch": False})
     lines.sort(key=lambda l: l["start"])
 
-    (out_dir / "transcript.json").write_text(json.dumps(lines, ensure_ascii=False, indent=2))
-    with open(out_dir / "transcript.txt", "w") as f:
+    (out_dir / "transcript_raw.json").write_text(json.dumps(lines, ensure_ascii=False, indent=2))
+    with open(out_dir / "transcript_raw.txt", "w") as f:
         f.write("# ⚠ = please listen and check   ⓘ = at a speaker switch\n\n")
         for l in lines:
             when = f"[{fmt(l['start'])} - {fmt(l['end'])}]"
@@ -387,13 +389,14 @@ def main() -> None:
     parser.add_argument("--yes", action="store_true", help="don't ask before sending")
     args = parser.parse_args()
 
-    segments_file = SPEAKERS_ROOT / args.audio.stem / "segments.json"
+    rec = recording_dir(args.audio)
+    segments_file = speakers_dir(rec) / "segments.json"
     if not segments_file.exists():
         sys.exit(f"No speaker timeline: run detect_speakers.py on {args.audio.name} first.")
-    out_dir = OUTPUT_ROOT / args.audio.stem
+    out_dir, work = transcript_dir(rec), working_dir(rec)
     for sub in ("pieces", "results"):
-        (out_dir / sub).mkdir(parents=True, exist_ok=True)
-    _log_file = open(out_dir / "progress.log", "a")
+        (work / sub).mkdir(parents=True, exist_ok=True)
+    _log_file = open(work / "progress.log", "a")
     log(f"===== {args.audio.name}  labels={args.labels}  limit={args.limit_minutes or 'none'} min =====")
 
     segments = json.loads(segments_file.read_text())
@@ -403,10 +406,10 @@ def main() -> None:
     plan = plan_pieces(audio, pauses, segments, set(args.labels.split(",")), args.limit_minutes)
     if not plan:
         sys.exit("Nothing to send.")
-    (out_dir / "plan.json").write_text(json.dumps(plan, indent=2))
+    (work / "plan.json").write_text(json.dumps(plan, indent=2))
 
     lengths = [p["end"] - p["start"] for p in plan]
-    done = {p["id"] for p in plan if load_result(p, out_dir)}
+    done = {p["id"] for p in plan if load_result(p, work)}
     todo = [p for p in plan if p["id"] not in done]
     todo_minutes = sum(p["end"] - p["start"] for p in todo) / 60
     log(f"Plan: {len(plan)} pieces covering {fmt(plan[0]['start'])} - {fmt(plan[-1]['end'])}")
@@ -426,7 +429,7 @@ def main() -> None:
     api = Monlam(os.environ.get("MONLAM_BASE_URL", "https://api-v1.monlamai.studio"), api_key)
 
     started, results = time.monotonic(), {}
-    failed = send_all(api, audio, plan, args.audio.stem, out_dir, results)
+    failed = send_all(api, audio, plan, rec.name, work, results)
     if failed:
         log(f"{len(failed)} pieces failed: {', '.join(failed)}. Run the same command again to retry only those.")
         sys.exit(1)
@@ -447,15 +450,15 @@ def main() -> None:
             else:
                 new_plan.append(p)
         plan = new_plan
-        failed = send_all(api, audio, halves, args.audio.stem, out_dir, results)
+        failed = send_all(api, audio, halves, rec.name, work, results)
         if failed:
             log(f"{len(failed)} pieces failed: {', '.join(failed)}. Run the same command again to retry only those.")
             sys.exit(1)
-    (out_dir / "plan.json").write_text(json.dumps(plan, indent=2))
+    (work / "plan.json").write_text(json.dumps(plan, indent=2))
 
     lines, warned = build_transcript(plan, results, segments, out_dir)
     log(f"Finished in {(time.monotonic() - started) / 60:.1f} min. {len(lines)} lines, {warned} with ⚠ warnings.")
-    log(f"Transcript: {(out_dir / 'transcript.txt').relative_to(PROJECT_ROOT)}")
+    log(f"Transcript: {show(out_dir / 'transcript_raw.txt')}")
 
 
 if __name__ == "__main__":

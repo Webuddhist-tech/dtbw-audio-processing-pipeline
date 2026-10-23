@@ -24,7 +24,7 @@ How it works:
     4. Smooth out flickers: turns last minutes, so a 1-second switch is a mistake.
        Short pauses stay with the speaker; long ones (static, breaks) are labelled "no speech".
 
-Writes to output/speakers/<audio name>/:
+Writes to output/Recordings/<recording>/1 - Speakers/ (see paths.py):
     labels_audacity.txt   open the audio in Audacity, then File > Import > Labels
     segments.json         the same timeline, for the next pipeline step
     samples/              a few 20 s clips of each label, to check by ear
@@ -41,8 +41,9 @@ import torch
 from sklearn.cluster import KMeans
 from speechbrain.inference.speaker import EncoderClassifier
 
+from paths import recording_dir, speakers_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "speakers"
 MODEL_DIR = PROJECT_ROOT / ".cache" / "spkrec-ecapa-voxceleb"
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -258,14 +259,14 @@ def main() -> None:
     if not args.audio.exists():
         sys.exit(f"Audio file not found: {args.audio}")
 
-    out_dir = OUTPUT_ROOT / args.audio.stem
+    out_dir = speakers_dir(recording_dir(args.audio))
     print(f"Fingerprinting {args.audio.name} on {DEVICE} ...")
     times, speech, emb = fingerprints(args.audio, out_dir / "fingerprints.npz")
     print(f"  {len(times)} windows, {speech.mean():.0%} contain sound")
 
     vectors = {}
     for source in args.examples_from:
-        src_dir = OUTPUT_ROOT / source.stem
+        src_dir = speakers_dir(recording_dir(source))
         if not (src_dir / "examples.json").exists() or not source.exists():
             sys.exit(f"No confirmed examples for {source}; run this script on it with --example first.")
         src_examples = [(e["label"], e["start"], e["end"] - e["start"])
