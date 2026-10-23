@@ -2,6 +2,10 @@
 
 Usage:
     .venv/bin/python scripts/transcribe.py AUDIO_FILE [--labels teacher] [--limit-minutes 10] [--dry-run] [--yes]
+        [--within 22:16-26:13 --within ...]   only send audio inside these time windows
+
+Other labels than the teacher (e.g. --labels chanting) are kept apart, so they never touch the
+teacher's transcript: transcript_raw_chanting.txt/.json and working files/chanting/.
 
 Needs the speaker timeline from detect_speakers.py (1 - Speakers/segments.json).
 
@@ -56,6 +60,7 @@ MIN_PIECE, TARGET_PIECE, MAX_PIECE = 10.0, 30.0, 45.0
 PARALLEL = 3
 POLL_SECONDS = 3
 JOB_TIMEOUT = 10 * 60
+RUN_ID = time.strftime("%Y%m%d%H%M%S")
 RETRIES = 3
 RESPLIT_ROUNDS = 2       # how many times a garbled piece may be halved and resent
 MIN_HALF = 4.0           # never make halves shorter than this (s)
@@ -155,25 +160,37 @@ def split(start: float, end: float, pauses: np.ndarray, audio: np.ndarray) -> li
     return pieces
 
 
-def plan_pieces(audio: np.ndarray, pauses: np.ndarray, segments: list, labels: set, limit_minutes: float) -> list:
+def plan_pieces(audio: np.ndarray, pauses: np.ndarray, segments: list, labels: set, limit_minutes: float,
+                windows: list = ()) -> list:
     total = len(audio) / SR
     plan, used = [], 0.0
     for idx, seg in enumerate(segments):
         if seg["name"] not in labels:
             continue
-        start, end = widen(seg["start"], seg["end"], pauses, total)
-        for n, (a, b, forced) in enumerate(split(start, end, pauses, audio)):
-            if limit_minutes and used >= limit_minutes * 60:
-                return plan
-            plan.append({
-                "id": f"{len(plan) + 1:04d}",
-                "start": round(float(a), 2), "end": round(float(b), 2),
-                "label": seg["name"], "segment": idx,
-                "segment_edge": bool(n == 0 or b >= end),
-                "forced_cut": bool(forced),
-            })
-            used += b - a
+        spans = [(seg["start"], seg["end"])] if not windows else [
+            (max(seg["start"], a), min(seg["end"], b)) for a, b in windows if min(seg["end"], b) - max(seg["start"], a) >= 1.0]
+        for span_start, span_end in spans:
+            start, end = widen(span_start, span_end, pauses, total)
+            for n, (a, b, forced) in enumerate(split(start, end, pauses, audio)):
+                if limit_minutes and used >= limit_minutes * 60:
+                    return plan
+                plan.append({
+                    "id": f"{len(plan) + 1:04d}",
+                    "start": round(float(a), 2), "end": round(float(b), 2),
+                    "label": seg["name"], "segment": idx,
+                    "segment_edge": bool(n == 0 or b >= end),
+                    "forced_cut": bool(forced),
+                })
+                used += b - a
     return plan
+
+
+def parse_window(text: str) -> tuple:
+    """'22:16-26:13' (h:mm:ss, mm:ss or seconds) -> (1336.0, 1573.0)"""
+    def secs(t: str) -> float:
+        return sum(float(x) * 60 ** i for i, x in enumerate(reversed(t.split(":"))))
+    a, b = text.split("-")
+    return secs(a), secs(b)
 
 
 # ---------- Monlam ----------
@@ -232,7 +249,8 @@ def transcribe_piece(api: Monlam, audio: np.ndarray, piece: dict, stem: str, out
     for attempt in range(1, RETRIES + 1):
         # Same key while retrying a submit, so Monlam does not bill a duplicate;
         # a new key after a FAILED job, since that request has to run again.
-        key = f"{stem}-{piece['id']}-{piece['start']:.2f}-try{attempt}"
+        # RUN_ID makes every run's keys new: Monlam keeps answering 500 to a key whose request failed.
+        key = f"{stem}-{piece['id']}-{piece['start']:.2f}-{RUN_ID}-try{attempt}"
         try:
             started = time.monotonic()
             for submit_try in range(3):
@@ -341,7 +359,7 @@ def send_all(api: Monlam, audio: np.ndarray, pieces: list, stem: str, out_dir: P
     return failed
 
 
-def build_transcript(plan: list, results: dict, segments: list, out_dir: Path) -> tuple:
+def build_transcript(plan: list, results: dict, segments: list, out_dir: Path, name: str = "transcript_raw") -> tuple:
     lines = []
     covered_until = max(p["end"] for p in plan)
     for piece in plan:
@@ -364,8 +382,8 @@ def build_transcript(plan: list, results: dict, segments: list, out_dir: Path) -
                           "text": None, "piece": None, "warnings": [], "near_switch": False})
     lines.sort(key=lambda l: l["start"])
 
-    (out_dir / "transcript_raw.json").write_text(json.dumps(lines, ensure_ascii=False, indent=2))
-    with open(out_dir / "transcript_raw.txt", "w") as f:
+    (out_dir / f"{name}.json").write_text(json.dumps(lines, ensure_ascii=False, indent=2))
+    with open(out_dir / f"{name}.txt", "w") as f:
         f.write("# ⚠ = please listen and check   ⓘ = at a speaker switch\n\n")
         for l in lines:
             when = f"[{fmt(l['start'])} - {fmt(l['end'])}]"
@@ -387,13 +405,18 @@ def main() -> None:
     parser.add_argument("--limit-minutes", type=float, default=0, help="only the first N minutes of selected audio")
     parser.add_argument("--dry-run", action="store_true", help="show the plan and cost, send nothing")
     parser.add_argument("--yes", action="store_true", help="don't ask before sending")
+    parser.add_argument("--within", type=parse_window, action="append", default=[],
+                        help="only send audio inside this window, e.g. 22:16-26:13 (repeatable)")
     args = parser.parse_args()
+    labels = sorted(args.labels.split(","))
+    extra = "" if labels == ["teacher"] else "+".join(labels)
 
     rec = recording_dir(args.audio)
     segments_file = speakers_dir(rec) / "segments.json"
     if not segments_file.exists():
         sys.exit(f"No speaker timeline: run detect_speakers.py on {args.audio.name} first.")
-    out_dir, work = transcript_dir(rec), working_dir(rec)
+    out_dir, work = transcript_dir(rec), (working_dir(rec) / extra if extra else working_dir(rec))
+    name = f"transcript_raw_{extra}" if extra else "transcript_raw"
     for sub in ("pieces", "results"):
         (work / sub).mkdir(parents=True, exist_ok=True)
     _log_file = open(work / "progress.log", "a")
@@ -403,7 +426,7 @@ def main() -> None:
     log("Reading audio and finding pauses ...")
     audio = load_audio(args.audio)
     pauses = find_pauses(audio)
-    plan = plan_pieces(audio, pauses, segments, set(args.labels.split(",")), args.limit_minutes)
+    plan = plan_pieces(audio, pauses, segments, set(labels), args.limit_minutes, args.within)
     if not plan:
         sys.exit("Nothing to send.")
     (work / "plan.json").write_text(json.dumps(plan, indent=2))
@@ -456,9 +479,9 @@ def main() -> None:
             sys.exit(1)
     (work / "plan.json").write_text(json.dumps(plan, indent=2))
 
-    lines, warned = build_transcript(plan, results, segments, out_dir)
+    lines, warned = build_transcript(plan, results, segments, out_dir, name)
     log(f"Finished in {(time.monotonic() - started) / 60:.1f} min. {len(lines)} lines, {warned} with ⚠ warnings.")
-    log(f"Transcript: {show(out_dir / 'transcript_raw.txt')}")
+    log(f"Transcript: {show(out_dir / (name + '.txt'))}")
 
 
 if __name__ == "__main__":

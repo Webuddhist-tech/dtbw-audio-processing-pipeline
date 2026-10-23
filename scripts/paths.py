@@ -3,12 +3,14 @@
 output/
     README.txt                              what is where
     Course - <course title>/                the finished course: Section / Subsection / Unit folders
+    Practice plan - <plan title>/           a finished daily practice plan: one folder per step
     Recordings/
         Day 1 - Morning - Teachings/        one folder per recording, named after where the audio lives
             1 - Speakers/                   who speaks when (detect_speakers.py, spot_check.py)
             2 - Transcript/                 transcript_raw.txt, transcript_corrected.txt, review notes
                 working files/              pieces sent to Monlam, raw replies, log, hand corrections
             3 - Course draft/               curriculum, unit content, unit audio, Word outline
+            3 - Practice plan draft/        or, for a practice session: steps, step audio
     Early tests/                            the first Monlam test clips and audio cleaning tests
 
 A recording's folder name comes from its audio path:
@@ -28,6 +30,7 @@ SPEAKERS = "1 - Speakers"
 TRANSCRIPT = "2 - Transcript"
 WORKING = "working files"
 COURSE_DRAFT = "3 - Course draft"
+PRACTICE_DRAFT = "3 - Practice plan draft"
 
 
 def recording_name(audio: Path) -> str:
@@ -74,6 +77,10 @@ def working_dir(rec: Path) -> Path:
 
 def course_draft_dir(rec: Path) -> Path:
     return rec / COURSE_DRAFT
+
+
+def practice_draft_dir(rec: Path) -> Path:
+    return rec / PRACTICE_DRAFT
 
 
 def show(path: Path) -> str:
