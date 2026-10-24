@@ -8,10 +8,13 @@ Step 1 - make clips:
 
 Step 2 - listen and fill in output/Recordings/<recording>/1 - Speakers/spot_check/answers.txt
     with one letter per clip: T = teacher, L = translator (Ladakhi), C = chanting,
-    S = static / no speech, M = mixed (more than one in the clip).
+    S = static / no speech, M = mixed (more than one in the clip). Several letters are fine
+    when you can tell what is mixed, e.g. "LS" = translator, then static.
 
 Step 3 - score:
     python scripts/spot_check.py score AUDIO_FILE
+
+Steps 2 and 3 in a browser instead: python scripts/spot_check_ui.py AUDIO_FILE
 """
 import argparse
 import json
@@ -27,6 +30,7 @@ CLIP_LEN = 10.0
 EXAMPLE_MARGIN = 30.0  # stay this far (s) away from the examples the script learned from
 SEED = 2026
 CODES = {"T": "teacher", "L": "translator", "C": "chanting", "S": "no speech", "M": "mixed"}
+MIN_SHARE = 2.0         # s; a label shorter than this in a clip is ignored when the listener picks several
 
 
 def fmt(seconds: float) -> str:
@@ -92,29 +96,58 @@ def make(audio: Path, out_dir: Path, count: int) -> None:
     print(f"Answer sheet: {sheet.relative_to(PROJECT_ROOT)}  (answer key saved separately - don't peek)")
 
 
-def score(out_dir: Path) -> None:
-    key = json.loads((out_dir / "spot_check_key.json").read_text())
+def read_answers(out_dir: Path) -> dict:
     answers = {}
     for line in (out_dir / "spot_check" / "answers.txt").read_text().splitlines():
         if line.startswith("check_") and ":" in line:
             name, _, code = line.partition(":")
-            answers[name.strip() + ".mp3"] = code.strip().upper()[:1]
+            letters = code.split("#")[0].strip().upper()           # anything after "#" is a note
+            answers[name.strip() + ".mp3"] = "".join(c for c in letters if c in CODES)
+    return answers
 
-    right = checked = 0
+
+def write_answers(out_dir: Path, answers: dict) -> None:
+    """answers: {"check_01": "T", ...} -> the same answers.txt a listener would fill in by hand."""
+    sheet = out_dir / "spot_check" / "answers.txt"
+    head = [l for l in sheet.read_text().splitlines() if l.startswith("#")] if sheet.exists() else []
+    clips = sorted(k["clip"][:-4] for k in json.loads((out_dir / "spot_check_key.json").read_text()))
+    sheet.write_text("\n".join(head + [f"{c}: {answers.get(c, '')}" for c in clips]) + "\n")
+
+
+def compare(out_dir: Path) -> list:
+    """One row per clip: what the listener heard next to what the script decided."""
+    key = json.loads((out_dir / "spot_check_key.json").read_text())
+    answers = read_answers(out_dir)
+    rows = []
     for k in key:
         code = answers.get(k["clip"], "")
-        if code not in CODES:
-            print(f"  {k['clip']}  {k['at']}  (no answer)")
+        heard = " + ".join(CODES[c] for c in code) or None
+        in_clip = {name for name, sec in k["seconds_per_label"].items() if sec >= MIN_SHARE}
+        if not code:
+            ok = None
+        elif code == "M":                       # "mixed": right if the script also has more than one
+            ok = len(k["seconds_per_label"]) > 1
+        elif len(code) > 1:                     # several picked: right if they are what the clip holds
+            ok = {CODES[c] for c in code} == in_clip
+        else:
+            ok = CODES[code] == k["script_says"]
+        rows.append({"clip": k["clip"], "at": k["at"], "heard": heard, "ok": ok,
+                     "script_says": k["script_says"], "seconds_per_label": k["seconds_per_label"]})
+    return rows
+
+
+def score(out_dir: Path) -> None:
+    rows = compare(out_dir)
+    for r in rows:
+        if r["heard"] is None:
+            print(f"  {r['clip']}  {r['at']}  (no answer)")
             continue
-        heard = CODES[code]
-        mixed_by_script = len(k["seconds_per_label"]) > 1
-        ok = heard == k["script_says"] or (heard == "mixed" and mixed_by_script)
-        checked += 1
-        right += ok
-        detail = ", ".join(f"{name} {sec:.0f}s" for name, sec in k["seconds_per_label"].items())
-        print(f"  {'OK   ' if ok else 'WRONG'} {k['clip']}  {k['at']}  you heard: {heard:10}  script: {detail}")
+        detail = ", ".join(f"{name} {sec:.0f}s" for name, sec in r["seconds_per_label"].items())
+        print(f"  {'OK   ' if r['ok'] else 'WRONG'} {r['clip']}  {r['at']}  you heard: {r['heard']:22}  script: {detail}")
+    checked = [r for r in rows if r["heard"] is not None]
     if checked:
-        print(f"\nScore: {right} of {checked} correct ({right / checked:.0%})")
+        right = sum(r["ok"] for r in checked)
+        print(f"\nScore: {right} of {len(checked)} correct ({right / len(checked):.0%})")
 
 
 def main() -> None:

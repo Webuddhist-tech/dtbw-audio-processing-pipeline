@@ -11,11 +11,11 @@ Reads (in output/Recordings/<recording>/):
 
 Writes output/Practice plan - <plan title>/ :
     Step 1 - <title>/
-        content.txt          how to do it, the teacher's instructions, the prayer
+        content.txt          how to do it, the teacher's instructions, the prayer(s) and meditation guide
+                             from the prayer booklet
         audio_tibetan.mp3    teacher and group chanting
         audio_ladakhi.mp3    translator (and group chanting, if cut with --chanting both)
     plan_outline.txt         the whole routine at a glance
-    prayers_review.txt       the prayer drafts next to what was heard, for the reviewer
 """
 import json
 import re
@@ -63,12 +63,13 @@ def write_content(path, plan: dict, step: dict, text: str, tracks: dict) -> None
             f"Source: {plan['source'].split(' (')[0]}, {a['start_hms']} - {a['end_hms']}{left_out}", ""]
     if text:
         out += [f"{RULE} ལམ་སྟོན། (Instructions) {RULE}", "", text, ""]
-    prayer = step.get("prayer")
-    if prayer:
-        out += [f"{RULE} འདོན་ཆ། (Prayer) {RULE}", "", prayer["title_bo"], ""]
-        out += [prayer["text"], ""] if prayer["text"] else ["[ དཔེ་ཆ་ནས་འདྲེན་དགོས། - copy from the prayer booklet ]", ""]
-        if prayer.get("draft"):
-            out += ["[ Draft from the recording; [?…] = not sure. Check against the prayer booklet - see prayers_review.txt ]", ""]
+    if step.get("prayers"):
+        out += [f"{RULE} འདོན་ཆ། (Prayer) {RULE}", ""]
+        for prayer in step["prayers"]:
+            out += [f"༄། {prayer['title_bo']}", "", prayer["text"], "", f"(Source: {prayer['source']})", ""]
+    if step.get("guide"):
+        out += [f"{RULE} སྒོམ་ཚུལ། (Meditation guide) {RULE}", ""] + step["guide"]["lines"]
+        out += ["", f"(Source: {step['guide']['source']})", ""]
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
@@ -97,12 +98,9 @@ def main() -> None:
                 shutil.copyfile(src / "step audio" / step_tracks[t]["file"], s_dir / fname)
         mins = " / ".join(f"{step_tracks[t]['minutes']}" for t in ("bo", "lad") if t in step_tracks)
         outline.append(f"{s_dir.name}    ({step['how_en'] or step['title_en']}; {mins} min)")
-        prayer = step.get("prayer") or {}
-        print(f"Step {n}: {len(text.split())} words of instructions, "
-              f"prayer: {'text' if prayer.get('text') else ('from booklet' if prayer else 'none')}, audio {'+'.join(step_tracks)}")
+        print(f"Step {n}: {len(text.split())} words of instructions, {len(step.get('prayers', []))} prayer(s), "
+              f"{'meditation guide, ' if step.get('guide') else ''}audio {'+'.join(step_tracks)}")
     (root / "plan_outline.txt").write_text("\n".join(outline) + "\n", encoding="utf-8")
-    if (src / "prayers_review.txt").exists():  # for the reviewer: the prayers heard in the recording, side by side
-        shutil.copyfile(src / "prayers_review.txt", root / "prayers_review.txt")
     print(f"\nPractice plan folder: {show(root)}")
 
 

@@ -1,8 +1,11 @@
 """Build the course folder: Course / Section / Subsection / Unit, each unit with its text and audio.
 
 Usage:
-    python3 scripts/build_course_folder.py teachings
-    (the recording's folder name, or a unique part of it - see paths.py)
+    python3 scripts/build_course_folder.py                 # every recording that has a course draft
+    python3 scripts/build_course_folder.py "Morning - Teachings" "Afternoon - Teachings"
+    (recording folder names, or unique parts of them - see paths.py)
+Sections from different recordings that share a course title go into one course folder,
+in section-number order.
 
 Reads (all in output/Recordings/<recording>/3 - Course draft/):
     curriculum.json                 structure, titles, audio ranges
@@ -24,7 +27,7 @@ import json
 import re
 import shutil
 import sys
-from paths import OUTPUT, course_draft_dir, find_recording, show
+from paths import OUTPUT, RECORDINGS, course_draft_dir, find_recording, show
 
 TIB_DIGITS = str.maketrans("0123456789", "༠༡༢༣༤༥༦༧༨༩")
 OPTION_LETTERS = ["ཀ", "ཁ", "ག", "ང", "ཅ"]
@@ -93,42 +96,52 @@ def write_content(path, source: str, section: dict, sub: dict, unit: dict, paras
 
 
 def main() -> None:
-    rec = find_recording(sys.argv[1] if len(sys.argv) > 1 else "teachings")
-    src = course_draft_dir(rec)
-    course = json.loads((src / "curriculum.json").read_text())
-    drafts = json.loads((src / "content" / "unit_text_draft.json").read_text())
-    contents = json.loads((src / "content" / "units_content.json").read_text())
-    tracks = json.loads((src / "unit audio" / "tracks.json").read_text())
+    # Every recording with a course draft goes into its course; sections from several recordings
+    # (e.g. Day 1 morning = Section 1, Day 1 afternoon = Section 2) share one course folder.
+    if len(sys.argv) > 1:
+        recs = [find_recording(name) for name in sys.argv[1:]]
+    else:
+        recs = sorted(p for p in RECORDINGS.iterdir() if (course_draft_dir(p) / "curriculum.json").exists())
+    courses = {}
+    for rec in recs:
+        src = course_draft_dir(rec)
+        course = json.loads((src / "curriculum.json").read_text())
+        drafts = json.loads((src / "content" / "unit_text_draft.json").read_text())
+        contents = json.loads((src / "content" / "units_content.json").read_text())
+        tracks = json.loads((src / "unit audio" / "tracks.json").read_text())
+        entry = courses.setdefault(course["course_title_bo"], {"course": course, "sections": []})
+        entry["sections"] += [(section, rec, src, drafts, contents, tracks) for section in course["sections"]]
 
-    root = OUTPUT / safe(f"Course - {course['course_title_bo']}")
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
-
-    outline = [course["course_title_bo"], course.get("course_title_en", ""), ""]
-    for section in course["sections"]:
-        s_dir = root / safe(f"Section {section['number']} - {section['title_bo']}")
-        outline.append(s_dir.name)
-        for sub in section["subsections"]:
-            ss_dir = s_dir / safe(f"Subsection {sub['number']} - {sub['title_bo']}")
-            outline.append(f"    {ss_dir.name}")
-            for unit in sub["units"]:
-                n = unit["number"]
-                u_dir = ss_dir / safe(f"Unit {n} - {unit['title_bo']}")
-                u_dir.mkdir(parents=True)
-                content = contents[n]
-                paras = unit_text(drafts[n]["lines"], content) if content.get("text", True) else []
-                unit_tracks = tracks.get(n, {})
-                write_content(u_dir / "content.txt", rec.name, section, sub, unit, paras, content, unit_tracks)
-                for t, fname in (("bo", "audio_tibetan.mp3"), ("lad", "audio_ladakhi.mp3")):
-                    if t in unit_tracks:
-                        shutil.copyfile(src / "unit audio" / unit_tracks[t]["file"], u_dir / fname)
-                files = ", ".join(sorted(p.name for p in u_dir.iterdir()))
-                outline.append(f"        {u_dir.name}    [{files}]")
-                print(f"{n}: {len(paras)} paragraphs, {len(content.get('key_points', []))} key points, "
-                      f"{len(content.get('mcq', []))} MCQs, audio {'+'.join(unit_tracks)}")
-    (root / "course_outline.txt").write_text("\n".join(outline) + "\n", encoding="utf-8")
-    print(f"\nCourse folder: {show(root)}")
+    for title, entry in courses.items():
+        course = entry["course"]
+        root = OUTPUT / safe(f"Course - {title}")
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True)
+        outline = [title, course.get("course_title_en", ""), ""]
+        for section, rec, src, drafts, contents, tracks in sorted(entry["sections"], key=lambda e: int(e[0]["number"])):
+            s_dir = root / safe(f"Section {section['number']} - {section['title_bo']}")
+            outline.append(f"{s_dir.name}    (from {rec.name})")
+            for sub in section["subsections"]:
+                ss_dir = s_dir / safe(f"Subsection {sub['number']} - {sub['title_bo']}")
+                outline.append(f"    {ss_dir.name}")
+                for unit in sub["units"]:
+                    n = unit["number"]
+                    u_dir = ss_dir / safe(f"Unit {n} - {unit['title_bo']}")
+                    u_dir.mkdir(parents=True)
+                    content = contents[n]
+                    paras = unit_text(drafts[n]["lines"], content) if content.get("text", True) else []
+                    unit_tracks = tracks.get(n, {})
+                    write_content(u_dir / "content.txt", rec.name, section, sub, unit, paras, content, unit_tracks)
+                    for t, fname in (("bo", "audio_tibetan.mp3"), ("lad", "audio_ladakhi.mp3")):
+                        if t in unit_tracks:
+                            shutil.copyfile(src / "unit audio" / unit_tracks[t]["file"], u_dir / fname)
+                    files = ", ".join(sorted(p.name for p in u_dir.iterdir()))
+                    outline.append(f"        {u_dir.name}    [{files}]")
+                    print(f"{n}: {len(paras)} paragraphs, {len(content.get('key_points', []))} key points, "
+                          f"{len(content.get('mcq', []))} MCQs, audio {'+'.join(unit_tracks)}")
+        (root / "course_outline.txt").write_text("\n".join(outline) + "\n", encoding="utf-8")
+        print(f"\nCourse folder: {show(root)}")
 
 
 if __name__ == "__main__":

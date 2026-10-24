@@ -59,6 +59,7 @@ SPOKEN_FORMS = [
 ]
 
 PARTICLES = {p + end: end for p in ("ཀི", "གི", "ཀྱི", "གྱི") for end in ("", "ས", "ན")}
+NOT_PARTICLES = {"སྤྱང་ཀི"}   # words that end in ཀི but are not the particle (སྤྱང་ཀི = wolf)
 
 
 def rule_fix(text: str, tidy: bool = True) -> str:
@@ -72,6 +73,8 @@ def rule_fix(text: str, tidy: bool = True) -> str:
             while j >= 0 and words[j] in ("་", ""):
                 j -= 1
             prev = re.split(r"[\s།]", words[j])[-1] if j >= 0 else ""
+            if f"{prev}་{core}" in NOT_PARTICLES:
+                continue
             new = particle_for(prev) + PARTICLES[core]
             words[i] = w.replace(core, new, 1)
         elif core == "མྱི":
@@ -79,6 +82,7 @@ def rule_fix(text: str, tidy: bool = True) -> str:
     out = "".join(words)
     for wrong, right in SPOKEN_FORMS:
         out = re.sub(wrong, right, out)
+    out = re.sub(r"(?<=[^ང\s])་(?=།)", "", out)        # "རེད་།" -> "རེད།" (but "ང་།" keeps its tsheg)
     if not tidy:  # hand-corrected text: keep its punctuation (e.g. verse marks "། །")
         return out
     out = re.sub(r"།\s*་", "། ", out)                  # "།་" -> "། "
